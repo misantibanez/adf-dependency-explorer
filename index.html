@@ -24,12 +24,13 @@
     <p class="hint">La seleccion no cambia el grafo hasta completar el analisis. Los permisos y el tenant corresponden a la sesion de az login en este equipo.</p>
   </section>
   <section class="summary"><div><span class="eyebrow">INVENTARIO LOCAL / SOLO LECTURA</span><h2 id="factory"></h2><p id="source"></p></div><div id="stats"></div></section>
-  <p class="notice">Las flechas indican <strong>usa / referencia a</strong>, no el orden de ejecucion. Este portal no elimina objetos. Un inventario sin referencias conocidas no garantiza un borrado seguro.</p>
+  <p class="notice">Las flechas indican <strong>usa / referencia a</strong>, <strong>mismo recurso</strong> por Resource ID o <strong>posible relacion</strong> por hostname (lineas discontinuas), no el orden de ejecucion. Este portal no elimina objetos. Un inventario sin referencias conocidas no garantiza un borrado seguro.</p>
   <main>
     <aside class="panel inventory">
       <div class="panel-heading"><h2>Objetos</h2><span id="count"></span></div>
       <label for="search">Buscar por nombre</label><input id="search" type="search" placeholder="Pipeline_B, dataset, servicio...">
-      <label for="type">Tipo de objeto</label><select id="type"><option value="">Todos los tipos</option value="pipeline">Pipelines</option><option value="activity">Actividades</option><option value="dataset">Datasets</option><option value="linkedService">Linked services</option><option value="integrationRuntime">Integration runtimes</option><option value="trigger">Triggers</option><option value="dataflow">Data flows</option></select>
+      <label for="type">Tipo de objeto</label><select id="type"><option value="">Todos los tipos</option><option value="pipeline">Pipelines</option><option value="activity">Actividades</option><option value="dataset">Datasets</option><option value="linkedService">Linked services</option><option value="integrationRuntime">Integration runtimes</option><option value="trigger">Triggers</option><option value="dataflow">Data flows</option><option value="managedPrivateEndpoint">Managed private endpoints</option></select>
+      <p class="hint">Managed private endpoints: posibles linked services por Resource ID, hostname o cuenta/servidor del destino. No acredita uso de la ruta privada ni candidatos a borrado. Vuelve a analizar el ADF para incluir estos metadatos.</p>
       <p class="hint">Marca pipelines para evaluar su borrado. Haz clic en un nombre para explorar sus relaciones.</p>
       <div id="objects" class="object-list"></div>
     </aside>

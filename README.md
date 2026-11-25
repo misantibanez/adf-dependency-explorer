@@ -225,10 +225,12 @@ El script hace exclusivamente `az rest --method get`, con API `2018-06-01`:
 | Integration runtimes | `/integrationRuntimes` |
 | Triggers | `/triggers` |
 | Data flows | `/dataflows` |
+| Managed virtual networks (descubrimiento) | `/managedVirtualNetworks` |
+| Managed private endpoints (por red) | `/managedVirtualNetworks/{red}/managedPrivateEndpoints` |
 
 Recorre todas las paginas `nextLink`. Un error de permisos, de respuesta o de
 paginacion cancela la exportacion; no convierte errores en listas vacias. Solo
-guarda el archivo al completar las seis colecciones y no sobrescribe archivos.
+guarda el archivo al completar todas las colecciones y no sobrescribe archivos.
 Las lecturas son secuenciales, **no un snapshot transaccional**: conviene
 extraer en una ventana sin publicaciones/cambios y repetir antes de un borrado.
 
@@ -247,6 +249,72 @@ son las dos fixtures de pruebas. Mantener los datos reales fuera del repositorio
 especialmente si es publico.
 
 ## Relaciones y alcance
+
+### Managed private endpoints
+
+El explorador incluye **Managed private endpoints** en la lista, busqueda,
+filtro y leyenda, con dos ejemplos ficticios en la demo. Se muestran como
+`red/endpoint` para distinguir nombres iguales en distintas managed virtual
+networks, junto con groupId, estado de conexion y aprovisionamiento.
+**Analizar ADF** o volver a ejecutar el extractor descubre todas las redes y
+recorre los endpoints de cada una, incluyendo todas las paginas. Una factory
+sin redes devuelve una lista vacia; errores de permisos no se ocultan como
+ausencia de endpoints ni generan un inventario parcial.
+
+Se agrega la relacion **Linked service -> Managed private endpoint** cuando
+`properties.resourceId` o `properties.typeProperties.resourceId` del linked
+service coincide con `properties.privateLinkResourceId` del endpoint.
+Solo se aceptan Resource IDs ARM completos y estaticos; se ignora mayusculas,
+espacios exteriores y una barra final, sin hacer coincidencias por nombre,
+prefijo ni pertenencia a una red. Expresiones y valores ausentes
+no producen relaciones. La ruta de propiedades se muestra como evidencia,
+etiquetada **coincidencia de Resource ID**, no como referencia ADF explicita.
+Asi se puede recorrer Pipeline -> Dataset -> Linked service -> Endpoint, y
+enfocar el endpoint para ver sus linked services y pipelines relacionados.
+El panel **Posibles linked services (N)** muestra el conteo y nombres navegables.
+
+Ademas, se muestran **posibles relaciones por hostname**, con lineas discontinuas:
+- Compara el hostname estatico del linked service con los FQDNs del endpoint.
+- Si el destino ARM es una cuenta de Storage o un servidor Azure SQL, tambien
+  deriva sus hostnames publicos de Azure para detectar coincidencias aunque
+  el endpoint no devuelva FQDNs. Para Storage incluye Blob y DFS de la misma
+  cuenta: no afirma que el groupId permita ese servicio.
+- Lee `typeProperties.url`, `serviceEndpoint`, `baseUrl`, `server`, `host`,
+  `endpoint`, `accountEndpoint` y `sasUri`; soporta `tcp:servidor,puerto` de SQL.
+  No resuelve expresiones, referencias a secretos ni connection strings.
+- Ignora mayusculas, punto DNS final y normaliza aliases `privatelink` solo
+  para dominios reconocidos de Azure Storage y SQL. No usa subcadenas ni
+  nombres de objetos para adivinar asociaciones.
+- No duplica una coincidencia exacta de Resource ID ni agrega una relacion
+  por hostname cuando los Resource IDs explicitos se contradicen.
+
+Esto permite relacionar un `AzureBlobFS` que solo declara
+`https://lakedemo.dfs.core.windows.net` con un endpoint cuyo destino es
+`Microsoft.Storage/storageAccounts/lakedemo`, sin inventar un Resource ID
+en el linked service. La demo usa este caso y un servidor SQL.
+El conteo de objetos transitivos tambien incluye los endpoints correlacionados;
+no altera el criterio de consumidores entrantes de pipelines/datasets/data flows.
+
+Esta es una **correlacion de recurso**, no prueba de uso de la ruta privada:
+no verifica DNS, IR, red ni groupId. Si varios endpoints apuntan al mismo
+recurso, se muestran todas las coincidencias, sin seleccionar uno como efectivo.
+Un endpoint sin aristas no es un candidato a borrado. No se agrega
+al selector de metricas de limpieza ni a evaluacion por conjunto.
+El extractor conserva estos Resource IDs para correlacionar (pueden ser
+informacion interna, no publicar inventarios reales). Conserva hostnames
+derivados en `properties.networkHosts`, incluidos los FQDNs saneados del endpoint;
+no conserva URLs completas, rutas, consultas/SAS, connection strings, secretos
+ni descripciones de conexion. El grafo compartido conserva relaciones y evidencia,
+no los Resource IDs ni hostnames originales.
+Requiere permisos de lectura de managedVirtualNetworks y sus managedPrivateEndpoints.
+
+Los JSON anteriores siguen funcionando con su analisis de dependencias original,
+pero pueden no incluir estos objetos o sus hostnames. **Volver a pulsar Analizar ADF**
+o reexportar e importar el JSON: recargar la pagina no completa los metadatos de
+un inventario anterior. Se admite la
+coleccion adicional `managedPrivateEndpoints` y su indicador de completitud.
+Los inventarios extraidos antes de incorporar la correlacion tampoco conservan
+los Resource IDs: volver a pulsar **Analizar ADF** para crear las relaciones.
 
 - Pipeline -> actividad, incluyendo ForEach, Until, IfCondition y Switch.
 - Actividad -> otro pipeline (ExecutePipeline).
@@ -331,6 +399,8 @@ la descarga del archivo; probar **Exportar reporte** en Edge/Chrome normal.
 - [Triggers - List By Factory](https://learn.microsoft.com/en-us/rest/api/datafactory/triggers/list-by-factory?view=rest-datafactory-2018-06-01)
 - [Data Flows - List By Factory](https://learn.microsoft.com/en-us/rest/api/datafactory/data-flows/list-by-factory?view=rest-datafactory-2018-06-01)
 - [Conceptos de integration runtime](https://learn.microsoft.com/en-us/azure/data-factory/concepts-integration-runtime)
+- [Managed Private Endpoints - List By Factory](https://learn.microsoft.com/en-us/rest/api/datafactory/managed-private-endpoints/list-by-factory?view=rest-datafactory-2018-06-01)
+- [Managed Virtual Networks - List By Factory](https://learn.microsoft.com/en-us/rest/api/datafactory/managed-virtual-networks/list-by-factory?view=rest-datafactory-2018-06-01)
 - [Historial de ejecuciones y retencion de 45 dias](https://learn.microsoft.com/en-us/azure/data-factory/monitor-programmatically)
 - [Pipeline Runs - Query By Factory](https://learn.microsoft.com/en-us/rest/api/datafactory/pipeline-runs/query-by-factory?view=rest-datafactory-2018-06-01)
 - [Configurar diagnosticos ADF](https://learn.microsoft.com/en-us/azure/data-factory/monitor-configure-diagnostics)

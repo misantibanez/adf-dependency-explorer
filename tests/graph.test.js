@@ -13,6 +13,131 @@ const execute = (name, target) => ({ name, type: "ExecutePipeline", typeProperti
 const pipeline = (name, activities = []) => ({ name, properties: { activities } });
 const pid = name => idFor("pipeline", name);
 
+test("managed private endpoints appear as scoped network inventory without invented dependencies or deletion metrics", () => {
+  const legacy = inventory([pipeline("A")]);
+  const legacyGraph = buildGraph(legacy);
+  const snapshot = structuredClone(legacy);
+  snapshot.collections.managedPrivateEndpoints = ["default", "other"].map(network => ({
+    name: `${network}/MPE_Test`, properties: { groupId: "blob", provisioningState: "Succeeded",
+      connectionState: { status: "Approved" }, privateLinkResourceId: "DO_NOT_STORE",
+      injected: ref("PipelineReference", "A") }
+  }));
+  snapshot.metadata.completeness.managedPrivateEndpoints = true;
+  const graph = buildGraph(snapshot);
+  assert.equal(graph.nodes.size, legacyGraph.nodes.size + 2);
+  const node = graph.nodes.get(idFor("managedPrivateEndpoint", "default/MPE_Test"));
+  assert.equal(node.state, "Approved");
+  assert.equal(node.subtype, "blob");
+  assert.equal(graph.incoming.get(node.id).length, 0);
+  assert.equal(graph.outgoing.get(node.id).length, 0);
+  assert.ok(!JSON.stringify([...graph.nodes.values()]).includes("DO_NOT_STORE"));
+  assert.deepEqual(pipelineMetrics(graph), pipelineMetrics(legacyGraph));
+  assert.throws(() => objectMetrics(graph, "managedPrivateEndpoint"), /no admitido/);
+  assert.throws(() => evaluateDeletion(graph, [node.id]), /otro tipo/);
+  snapshot.collections.managedPrivateEndpoints = {};
+  assert.ok(buildGraph(snapshot).issues.some(issue => issue.message.includes("managedPrivateEndpoints")));
+});
+
+test("resource ID correlation connects linked services and transitive pipeline consumers to every matching endpoint", () => {
+  const resourceId = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/lake";
+  const snapshot = inventory([pipeline("A", [{ name: "Copy", type: "Copy", inputs: [ref("DatasetReference", "D")] }])], {
+    datasets: [{ name: "D", properties: { linkedServiceName: ref("LinkedServiceReference", "LS") } }],
+    linkedservices: [
+      { name: "LS", properties: { typeProperties: { resourceId: ` ${resourceId.toUpperCase()}/ ` } } },
+      { name: "LS_Top", properties: { resourceId } }
+    ],
+    managedPrivateEndpoints: ["default/blob", "default/dfs", "other/blob"].map(name => ({
+      name, properties: { privateLinkResourceId: resourceId, groupId: name.endsWith("dfs") ? "dfs" : "blob" }
+    }))
+  });
+  const graph = buildGraph(snapshot);
+  const endpoint = idFor("managedPrivateEndpoint", "default/blob");
+  assert.equal(graph.issues.length, 0);
+  assert.equal(graph.incoming.get(endpoint).length, 2);
+  assert.equal(graph.edges.filter(edge => edge.kind === "resourceMatch").length, 6);
+  assert.ok(graph.incoming.get(endpoint).every(edge => edge.evidence.includes("privateLinkResourceId")));
+  const consumers = traverse(graph, endpoint, "incoming");
+  for (const id of [pid("A"), idFor("dataset", "D"), idFor("linkedService", "LS")]) assert.ok(consumers.has(id));
+  assert.ok(traverse(graph, pid("A"), "outgoing").has(endpoint));
+  assert.equal(pipelineMetrics(graph).rows[0].status, "candidate");
+  assert.ok(!JSON.stringify(graph.edges).toLowerCase().includes(resourceId.toLowerCase()));
+});
+
+test("resource correlation rejects dynamic, malformed, missing, partial and different-resource IDs", () => {
+  const resourceId = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/lake";
+  const invalid = [undefined, "", "@pipeline().parameters.resourceId", { type: "Expression", value: resourceId },
+    "https://lake.blob.core.windows.net", resourceId + "/child", resourceId + "/blobServices/default",
+    resourceId.replace("11111111-", "22222222-"), resourceId.replace("rg-test", "another-rg"), resourceId + "?token=secret"];
+  const snapshot = inventory([], {
+    linkedservices: invalid.map((resourceId, index) => ({ name: `LS_${index}`, properties: { typeProperties: { resourceId } } })),
+    managedPrivateEndpoints: [{ name: "default/blob", properties: { privateLinkResourceId: resourceId } }]
+  });
+  assert.equal(buildGraph(snapshot).edges.filter(edge => edge.kind === "resourceMatch").length, 0);
+  snapshot.collections.linkedservices = [{ name: "LS", properties: { typeProperties: { resourceId } } }];
+  for (const privateLinkResourceId of invalid) {
+    snapshot.collections.managedPrivateEndpoints[0].properties.privateLinkResourceId = privateLinkResourceId;
+    assert.equal(buildGraph(snapshot).edges.filter(edge => edge.kind === "resourceMatch").length, 0);
+  }
+});
+
+test("possible linked services include ADLS URLs without Resource IDs and trace back to pipelines", () => {
+  const target = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/lake";
+  const snapshot = inventory([pipeline("A", [{ name: "Copy", type: "Copy", inputs: [ref("DatasetReference", "D")] }])], {
+    datasets: [{ name: "D", properties: { linkedServiceName: ref("LinkedServiceReference", "LS_Lake") } }],
+    linkedservices: [{ name: "LS_Lake", properties: { type: "AzureBlobFS", typeProperties: {
+      url: "https://LAKE.dfs.core.windows.net/container?sig=DO_NOT_STORE"
+    } } }],
+    managedPrivateEndpoints: ["default/blob", "default/dfs"].map(name => ({
+      name, properties: { privateLinkResourceId: target, groupId: name.split("/")[1], fqdns: [] }
+    }))
+  });
+  const graph = buildGraph(snapshot);
+  const matches = graph.edges.filter(edge => edge.kind === "possibleNetwork");
+  assert.equal(matches.length, 2);
+  assert.ok(matches.every(edge => edge.evidence.includes("groupId no verificado")));
+  const incoming = traverse(graph, idFor("managedPrivateEndpoint", "default/dfs"), "incoming");
+  assert.ok(incoming.has(pid("A")));
+  assert.ok(incoming.has(idFor("dataset", "D")));
+  assert.equal(pipelineMetrics(graph).rows[0].status, "candidate");
+  assert.ok(!JSON.stringify([...graph.nodes.values(), ...graph.edges]).includes("DO_NOT_STORE"));
+});
+
+test("possible network matches use exact DNS names, SQL servers or sanitized host projections, not names or secrets", () => {
+  const snapshot = inventory([], {
+    linkedservices: [
+      { name: "Custom", properties: { typeProperties: { serviceEndpoint: "https://custom.example.net:443/path?secret=DO_NOT_STORE" } } },
+      { name: "SQL", properties: { typeProperties: { server: "tcp:sqltest.database.windows.net,1433" } } },
+      { name: "Projected", properties: { networkHosts: ["SQLTEST.privatelink.database.windows.net."] } }
+    ],
+    managedPrivateEndpoints: [
+      { name: "default/custom", properties: { fqdns: ["CUSTOM.example.net."] } },
+      { name: "default/sql", properties: { privateLinkResourceId: "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Sql/servers/sqltest" } }
+    ]
+  });
+  const graph = buildGraph(snapshot);
+  assert.equal(graph.edges.filter(edge => edge.kind === "possibleNetwork").length, 3);
+  const invalid = ["https://custom.example.net.evil.test", "https://notcustom.example.net", "@{linkedService().url}",
+    { type: "Expression", value: "https://custom.example.net" }, { type: "SecureString", value: "https://custom.example.net" },
+    "https://custom.example.net@evil.test", "https://evil.test/path/custom.example.net", "custom.privatelink.example.net", undefined];
+  snapshot.collections.linkedservices = invalid.map((url, i) => ({ name: `custom.example.net_${i}`, properties: { typeProperties: { url } } }));
+  assert.equal(buildGraph(snapshot).edges.filter(edge => edge.kind === "possibleNetwork").length, 0);
+});
+
+test("exact resource matches take precedence over hostname matches and conflicting resource IDs do not create possible links", () => {
+  const target = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/lake";
+  const snapshot = inventory([], {
+    linkedservices: [
+      { name: "Exact", properties: { typeProperties: { resourceId: target, url: "https://lake.dfs.core.windows.net" } } },
+      { name: "Conflict", properties: { typeProperties: { resourceId: target.replace("rg-test", "other-rg"), url: "https://lake.dfs.core.windows.net" } } }
+    ],
+    managedPrivateEndpoints: [{ name: "default/dfs", properties: { privateLinkResourceId: target, networkHosts: ["lake.dfs.core.windows.net"] } }]
+  });
+  const graph = buildGraph(snapshot);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].kind, "resourceMatch");
+  assert.equal(graph.edges[0].source, idFor("linkedService", "Exact"));
+});
+
 test("Copy -> dataset -> linked service -> IR and nested ExecutePipeline retain exact activity evidence", () => {
   const snapshot = inventory([
     pipeline("A", [

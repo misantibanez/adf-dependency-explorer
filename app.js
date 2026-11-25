@@ -1,9 +1,10 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const names = { pipeline: "Pipeline", activity: "Actividad", dataset: "Dataset",
-  linkedService: "Linked service", integrationRuntime: "Integration runtime", trigger: "Trigger", dataflow: "Data flow" };
+  linkedService: "Linked service", integrationRuntime: "Integration runtime", trigger: "Trigger", dataflow: "Data flow",
+  managedPrivateEndpoint: "Managed private endpoint" };
 const colors = { pipeline: "#77b9ff", activity: "#b199ef", dataset: "#56d3bb",
-  linkedService: "#f0ba72", integrationRuntime: "#e988ac", trigger: "#f1dc7e", dataflow: "#65c7ed" };
+  linkedService: "#f0ba72", integrationRuntime: "#e988ac", trigger: "#f1dc7e", dataflow: "#65c7ed", managedPrivateEndpoint: "#a9d77b" };
 let graph, focused, report, zoom = 1;
 const selected = new Set();
 function element(tag, text, className) {
@@ -14,6 +15,10 @@ function element(tag, text, className) {
 }
 function error(message) { $("error").textContent = message; $("error").hidden = !message; }
 function label(node) { return node.label || node.name; }
+function edgeLabel(edge) {
+  return edge.kind === "contains" ? "contiene" : edge.kind === "resourceMatch" ? "mismo recurso" :
+    edge.kind === "possibleNetwork" ? "posible relacion" : "usa";
+}
 function linkNode(id, text) {
   const button = element("button", text || label(graph.nodes.get(id)));
   button.addEventListener("click", () => focus(id));
@@ -74,7 +79,7 @@ function renderObjects() {
     }
     row.append(element("i", undefined, `dot ${node.type}`));
     const button = linkNode(node.id);
-    button.append(element("small", `${names[node.type]}${node.subtype ? " / " + node.subtype : ""}${node.missing ? " / NO ENCONTRADO" : ""}`));
+    button.append(element("small", `${names[node.type]}${node.subtype ? " / " + node.subtype : ""}${node.type === "managedPrivateEndpoint" && node.state ? " / " + node.state : ""}${node.missing ? " / NO ENCONTRADO" : ""}`));
     row.append(button); $("objects").append(row);
   }
   if (!rows.length) $("objects").append(element("div", "No hay coincidencias.", "empty"));
@@ -101,7 +106,7 @@ function renderGraph() {
   const total = visible.size, cap = 180;
   const ids = [...visible].slice(0, cap), shown = new Set(ids);
   $("graph-info").textContent = `${Math.min(total, cap)} de ${total} nodos del contexto. ${total > cap ? "Vista limitada a 180 nodos; enfoca otro objeto para explorar. El reporte usa todo el inventario." : "Clic en un nodo para enfocarlo. Desplaza el mapa para ver todas las columnas."}`;
-  const kinds = ["trigger", "pipeline", "activity", "dataflow", "dataset", "linkedService", "integrationRuntime"];
+  const kinds = ["trigger", "pipeline", "activity", "dataflow", "dataset", "linkedService", "integrationRuntime", "managedPrivateEndpoint"];
   const columns = kinds.map(kind => ids.filter(id => graph.nodes.get(id).type === kind)).filter(col => col.length);
   const positions = new Map(), width = Math.max(620, columns.length * 262 + 40);
   const height = Math.max(280, Math.max(...columns.map(col => col.length)) * 102 + 65);
@@ -116,10 +121,10 @@ function renderGraph() {
     const a = positions.get(edge.source), b = positions.get(edge.target), forward = b.x > a.x;
     const sx = forward ? a.x + 218 : a.x, tx = forward ? b.x : b.x + 218;
     const bend = forward ? Math.max(25, (tx - sx) / 2) : -35;
-    const path = svg("path", { class: "edge", d: `M ${sx} ${a.y + 28} C ${sx + bend} ${a.y + 28}, ${tx - bend} ${b.y + 28}, ${tx} ${b.y + 28}`, "marker-end": "url(#arrow)" });
-    path.append(svg("title", {}, `${label(graph.nodes.get(edge.source))} -> ${label(graph.nodes.get(edge.target))}\n${edge.evidence}`));
+    const path = svg("path", { class: `edge${edge.kind === "possibleNetwork" ? " possible-network" : ""}`, d: `M ${sx} ${a.y + 28} C ${sx + bend} ${a.y + 28}, ${tx - bend} ${b.y + 28}, ${tx} ${b.y + 28}`, "marker-end": "url(#arrow)" });
+    path.append(svg("title", {}, `${label(graph.nodes.get(edge.source))} -> ${label(graph.nodes.get(edge.target))}\n${edgeLabel(edge)}: ${edge.evidence}`));
     canvas.append(path);
-    if (forward && b.x - a.x === 262) canvas.append(svg("text", { class: "edge-label", x: sx + 4, y: (a.y + b.y) / 2 + 20 }, edge.kind === "contains" ? "contiene" : "usa"));
+    if (forward && b.x - a.x === 262) canvas.append(svg("text", { class: "edge-label", x: sx + 4, y: (a.y + b.y) / 2 + 20 }, edgeLabel(edge)));
   }
   for (const id of ids) {
     const node = graph.nodes.get(id), pos = positions.get(id);
@@ -134,17 +139,26 @@ function renderGraph() {
     canvas.append(group);
   }
   for (const [title, index, branch] of [["Lo usan (directo)", graph.incoming, "incoming"], ["Usa (directo)", graph.outgoing, "outgoing"]]) {
-    const section = element("div"); section.append(element("h3", title));
     const edges = index.get(focused);
+    const endpointConsumers = focusNode.type === "managedPrivateEndpoint" && branch === "incoming";
+    const count = new Set(edges.map(edge => edge.source)).size;
+    const hasPossible = edges.some(edge => edge.kind === "possibleNetwork");
+    const section = element("div"); section.append(element("h3", endpointConsumers ? `Posibles linked services (${count})` :
+      hasPossible ? "Referencias y posibles relaciones" : title));
     for (const edge of edges) {
       const id = branch === "incoming" ? edge.source : edge.target;
       const node = graph.nodes.get(id);
       const button = linkNode(id, `${label(node)}${node.owner ? " [" + graph.nodes.get(node.owner).name + "]" : ""}`);
       button.className = "relation";
-      button.append(element("small", `${edge.kind === "contains" ? "contiene" : "referencia"} / ${edge.evidence}`)); section.append(button);
+      button.append(element("small", `${edge.kind === "contains" ? "contiene" : edge.kind === "resourceMatch" ? "coincidencia de Resource ID (ruta privada no verificada)" : edge.kind === "possibleNetwork" ? "POSIBLE relacion por hostname (uso no verificado)" : "referencia"} / ${edge.evidence}`)); section.append(button);
     }
-    if (!edges.length) section.append(element("p", "Sin relaciones directas conocidas."));
+    if (!edges.length) section.append(element("p", endpointConsumers ?
+      "No se identificaron posibles linked services con los metadatos disponibles. Vuelve a analizar el ADF para incluir hostnames; expresiones, secretos y conectores sin destino visible requieren revision manual." :
+      "Sin relaciones directas conocidas."));
     $("relations").append(section);
+  }
+  if (focusNode.type === "managedPrivateEndpoint") {
+    $("relations").append(element("p", `Conexion: ${focusNode.state || "desconocida"}. Aprovisionamiento: ${focusNode.provisioningState || "desconocido"}. Posibles linked services por Resource ID, hostname/FQDN o cuenta Storage/servidor SQL del destino. Las lineas discontinuas son posibles relaciones: no verifican DNS, red, IR ni groupId. Puede haber varios endpoints para el mismo recurso; se muestran todos. Sin coincidencias no significa sin uso ni candidato a borrado.`, "notice"));
   }
 }
 function renderReport() {
@@ -226,7 +240,7 @@ try {
   const objectName = query.get("objectName") || query.get("pipeline");
   const objectType = query.get("objectName") ? query.get("objectType") : "pipeline";
   if (objectName) {
-    if (!["pipeline", "dataset", "dataflow"].includes(objectType)) error("El tipo de objeto solicitado no es valido.");
+    if (!["pipeline", "dataset", "dataflow", "managedPrivateEndpoint"].includes(objectType)) error("El tipo de objeto solicitado no es valido.");
     else {
       const id = AdfGraph.idFor(objectType, objectName);
       if (!graph.nodes.has(id) || graph.nodes.get(id).missing) error("El objeto solicitado no existe en el inventario cargado.");

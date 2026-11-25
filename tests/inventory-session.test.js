@@ -36,6 +36,29 @@ test("corrupt stored graphs cannot silently display another factory", () => {
   const api = session({ getItem: () => '{"version":2}' });
   assert.throws(() => api.read(), /formato valido/);
 });
+test("resource and possible matches survive same-tab graph handoff without target IDs, hostnames or raw URLs", () => {
+  const data = new Map();
+  const api = session({ getItem: key => data.get(key) || null, setItem: (key, value) => data.set(key, value) });
+  const input = structuredClone(snapshot);
+  const target = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/lake";
+  input.collections.linkedservices = [
+    { name: "LS", properties: { typeProperties: { resourceId: target } } },
+    { name: "LS_Url", properties: { typeProperties: { url: "https://lake.dfs.core.windows.net/path?sig=DO_NOT_STORE" } } }
+  ];
+  input.collections.managedPrivateEndpoints = [{ name: "default/MPE", properties: { privateLinkResourceId: target } }];
+  input.metadata.completeness.managedPrivateEndpoints = true;
+  const graph = buildGraph(input);
+  api.save(graph);
+  const restored = api.read();
+  assert.deepEqual(structuredClone(restored.edges), graph.edges);
+  const edge = restored.edges.find(edge => edge.kind === "resourceMatch");
+  assert.ok(edge);
+  assert.equal(restored.incoming.get(edge.target)[0].source, edge.source);
+  assert.ok(restored.edges.some(edge => edge.kind === "possibleNetwork"));
+  assert.ok(!data.get("adf-current-graph").includes("lake.dfs.core.windows.net"));
+  assert.ok(!data.get("adf-current-graph").includes("DO_NOT_STORE"));
+  assert.ok(!data.get("adf-current-graph").includes(target));
+});
 test("history handoff projects minimal fields, is inventory-scoped and removes stale history on failed writes", () => {
   const data = new Map();
   let fail = false;

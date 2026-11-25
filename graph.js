@@ -2,7 +2,8 @@
   "use strict";
   const collections = {
     pipelines: "pipeline", datasets: "dataset", linkedservices: "linkedService",
-    integrationRuntimes: "integrationRuntime", triggers: "trigger", dataflows: "dataflow"
+    integrationRuntimes: "integrationRuntime", triggers: "trigger", dataflows: "dataflow",
+    managedPrivateEndpoints: "managedPrivateEndpoint"
   };
   const referenceTypes = {
     PipelineReference: "pipeline", DatasetReference: "dataset",
@@ -11,6 +12,45 @@
   };
   const idFor = (type, name) => JSON.stringify([type, name.toLowerCase()]);
   const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  function resourceKey(value) {
+    if (typeof value !== "string") return null;
+    const id = value.trim().replace(/\/$/, "");
+    return /^\/subscriptions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/resourceGroups\/[^/?#@]+\/providers\/[^/?#@\s]+(?:\/[^/?#@]+\/[^/?#@]+)+$/i.test(id) ?
+      id.toLowerCase() : null;
+  }
+  function hostKey(value) {
+    if (typeof value !== "string" || value.includes("@{")) return null;
+    const match = /^(?:https?:\/\/)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)\.?(?::\d+|,\d+)?(?:[/?#].*)?$/i.exec(value.trim().replace(/^tcp:/i, ""));
+    return match ? match[1].toLowerCase().replace(/\.privatelink\.(?=(?:blob|dfs|file|queue|table|web)\.core\.windows\.net$|database\.windows\.net$)/, ".") : null;
+  }
+  function linkedHosts(properties) {
+    const values = Array.isArray(properties.networkHosts) ? [...properties.networkHosts] : [];
+    for (const field of ["url", "serviceEndpoint", "baseUrl", "server", "host", "endpoint", "accountEndpoint", "sasUri"]) {
+      values.push(properties.typeProperties?.[field]);
+    }
+    return [...new Set(values.map(hostKey).filter(Boolean))];
+  }
+  function endpointHosts(properties) {
+    const result = new Map();
+    for (const value of [...(Array.isArray(properties.networkHosts) ? properties.networkHosts : []),
+      ...(Array.isArray(properties.fqdns) ? properties.fqdns : [])]) {
+      const host = hostKey(value);
+      if (host) result.set(host, "hostname del linked service = FQDN del endpoint");
+    }
+    const target = resourceKey(properties.privateLinkResourceId);
+    const storage = /\/providers\/microsoft\.storage\/storageaccounts\/([a-z0-9]{3,24})$/.exec(target || "");
+    if (storage) {
+      for (const service of ["blob", "dfs", "file", "queue", "table", "web"]) {
+        const host = `${storage[1]}.${service}.core.windows.net`;
+        if (!result.has(host)) result.set(host, "hostname de Azure Storage = cuenta del Resource ID del endpoint (groupId no verificado)");
+      }
+    }
+    const sql = /\/providers\/microsoft\.sql\/servers\/([a-z0-9-]+)$/.exec(target || "");
+    if (sql && !result.has(`${sql[1]}.database.windows.net`)) {
+      result.set(`${sql[1]}.database.windows.net`, "servidor SQL = recurso del Resource ID del endpoint");
+    }
+    return result;
+  }
 
   function buildGraph(snapshot) {
     if (!isObject(snapshot) || snapshot.schemaVersion !== 1 || !isObject(snapshot.collections)) {
@@ -30,9 +70,11 @@
         edges.push({ source, target, kind, evidence });
       }
     }
-    const resources = [];
+    const resources = [], networkTargets = new Map(), linkedTargets = [], hostTargets = new Map(), linkedNetworks = [];
     for (const [key, type] of Object.entries(collections)) {
       const raw = snapshot.collections[key];
+      // Older inventories did not collect network objects; preserve their dependency analysis.
+      if (key === "managedPrivateEndpoints" && raw === undefined && snapshot.metadata?.completeness?.[key] === undefined) continue;
       const rows = Array.isArray(raw) ? raw : isObject(raw) ? raw.value : undefined;
       if (!Array.isArray(rows)) {
         issue(null, `Inventario ausente o invalido: ${key}.`);
@@ -49,8 +91,54 @@
         }
         const id = idFor(type, resource.name);
         if (nodes.has(id)) throw new Error(`Objeto duplicado: ${type} / ${resource.name}.`);
-        addNode(type, resource.name, { subtype: resource.properties.type || "", state: resource.properties.runtimeState || "" });
-        resources.push({ id, type, resource });
+        if (type === "managedPrivateEndpoint") {
+          addNode(type, resource.name, {
+            subtype: typeof resource.properties.groupId === "string" ? resource.properties.groupId : "",
+            state: typeof resource.properties.connectionState?.status === "string" ? resource.properties.connectionState.status : "",
+            provisioningState: typeof resource.properties.provisioningState === "string" ? resource.properties.provisioningState : ""
+          });
+          const target = resourceKey(resource.properties.privateLinkResourceId);
+          if (target) {
+            if (!networkTargets.has(target)) networkTargets.set(target, []);
+            networkTargets.get(target).push(id);
+          }
+          for (const [host, evidence] of endpointHosts(resource.properties)) {
+            if (!hostTargets.has(host)) hostTargets.set(host, []);
+            hostTargets.get(host).push({ id, target, evidence });
+          }
+        } else {
+          addNode(type, resource.name, { subtype: resource.properties.type || "", state: resource.properties.runtimeState || "" });
+          resources.push({ id, type, resource });
+          if (type === "linkedService") {
+            const targets = [];
+            for (const [path, value] of [
+              ["properties.resourceId", resource.properties.resourceId],
+              ["properties.typeProperties.resourceId", resource.properties.typeProperties?.resourceId]
+            ]) {
+              const target = resourceKey(value);
+              if (target) { linkedTargets.push({ id, target, path }); targets.push(target); }
+            }
+            linkedNetworks.push({ id, targets, hosts: linkedHosts(resource.properties) });
+          }
+        }
+      }
+    }
+    const matchedPairs = new Set();
+    for (const { id, target, path } of linkedTargets) {
+      for (const endpoint of networkTargets.get(target) || []) {
+        edge(id, endpoint, "resourceMatch", `${path} = properties.privateLinkResourceId (Resource ID)`);
+        matchedPairs.add(JSON.stringify([id, endpoint]));
+      }
+    }
+    for (const { id, targets, hosts } of linkedNetworks) {
+      for (const host of hosts) {
+        for (const endpoint of hostTargets.get(host) || []) {
+          if (targets.length && endpoint.target && !targets.includes(endpoint.target)) continue;
+          const pair = JSON.stringify([id, endpoint.id]);
+          if (matchedPairs.has(pair)) continue;
+          edge(id, endpoint.id, "possibleNetwork", endpoint.evidence);
+          matchedPairs.add(pair);
+        }
       }
     }
     function reference(value, source, path) {

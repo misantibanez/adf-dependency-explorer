@@ -11,6 +11,26 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'AdfApi.ps1')
 
+function Select-ResourceId {
+    param($Value)
+    if ($Value -is [string]) {
+        $id = $Value.Trim().TrimEnd('/')
+        if ($id -match '^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourceGroups/[^/?#@]+/providers/[^/?#@\s]+(?:/[^/?#@]+/[^/?#@]+)+$') {
+            return $id
+        }
+    }
+}
+
+function Select-NetworkHost {
+    param($Value)
+    if ($Value -is [string] -and -not $Value.Contains('@{')) {
+        $text = $Value.Trim() -replace '^tcp:', ''
+        if ($text -match '^(?:https?://)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)\.?(?::\d+|,\d+)?(?:[/?#].*)?$') {
+            return $Matches[1].ToLowerInvariant() -replace '\.privatelink\.(?=(?:blob|dfs|file|queue|table|web)\.core\.windows\.net$|database\.windows\.net$)', '.'
+        }
+    }
+}
+
 function Select-DependencyMetadata {
     param($Value)
     if ($null -eq $Value) { return $null }
@@ -73,11 +93,57 @@ foreach ($key in $endpoints.Keys) {
         }
         $properties = Select-DependencyMetadata $row.properties
         if ($null -eq $properties) { $properties = @{} }
+        if ($key -eq 'linkedservices') {
+            $hosts = @(
+                if ($row.properties.typeProperties -is [System.Collections.IDictionary]) {
+                    foreach ($field in @('url', 'serviceEndpoint', 'baseUrl', 'server', 'host', 'endpoint', 'accountEndpoint', 'sasUri')) {
+                        Select-NetworkHost $row.properties.typeProperties[$field]
+                    }
+                }
+            ) | Select-Object -Unique
+            $properties.networkHosts = @($hosts | Where-Object { $_ -is [string] })
+            $resourceId = Select-ResourceId $row.properties.resourceId
+            if ($resourceId) { $properties.resourceId = $resourceId }
+            $resourceId = Select-ResourceId $row.properties.typeProperties.resourceId
+            if ($resourceId) {
+                if (-not $properties.Contains('typeProperties')) { $properties.typeProperties = @{} }
+                $properties.typeProperties.resourceId = $resourceId
+            }
+        }
         $cleanRows.Add(@{ name = $row.name; properties = $properties })
     }
     $inventory[$key] = $cleanRows.ToArray()
     $completeness[$key] = $true
 }
+$privateEndpoints = [System.Collections.Generic.List[object]]::new()
+Write-Host 'Leyendo managedVirtualNetworks y managedPrivateEndpoints...'
+$networks = Get-AdfCollection -Url "$factoryBase/managedVirtualNetworks?api-version=2018-06-01" -FactoryBase $factoryBase
+foreach ($network in $networks) {
+    if ($network.name -isnot [string] -or $network.name -notmatch '^[_A-Za-z0-9][-_\w]{0,126}$') {
+        throw 'Managed virtual network invalida. Exportacion cancelada.'
+    }
+    $networkBase = "$factoryBase/managedVirtualNetworks/$([uri]::EscapeDataString($network.name))"
+    $rows = Get-AdfCollection -Url "$networkBase/managedPrivateEndpoints?api-version=2018-06-01" -FactoryBase $networkBase
+    foreach ($row in $rows) {
+        if ($row.name -isnot [string] -or -not $row.name.Trim() -or $row.properties -isnot [System.Collections.IDictionary]) {
+            throw 'Managed private endpoint invalido. Exportacion cancelada.'
+        }
+        $properties = @{ managedVirtualNetworkName = $network.name }
+        $hosts = @(foreach ($fqdn in $row.properties.fqdns) { Select-NetworkHost $fqdn }) | Select-Object -Unique
+        $properties.networkHosts = @($hosts | Where-Object { $_ -is [string] })
+        $resourceId = Select-ResourceId $row.properties.privateLinkResourceId
+        if ($resourceId) { $properties.privateLinkResourceId = $resourceId }
+        foreach ($field in @('groupId', 'provisioningState')) {
+            if ($row.properties[$field] -is [string]) { $properties[$field] = $row.properties[$field] }
+        }
+        if ($row.properties.connectionState.status -is [string]) {
+            $properties.connectionState = @{ status = $row.properties.connectionState.status }
+        }
+        $privateEndpoints.Add(@{ name = "$($network.name)/$($row.name)"; properties = $properties })
+    }
+}
+$inventory.managedPrivateEndpoints = $privateEndpoints.ToArray()
+$completeness.managedPrivateEndpoints = $true
 $snapshot = [ordered]@{
     schemaVersion = 1
     metadata = [ordered]@{
