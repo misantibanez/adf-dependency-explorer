@@ -1,0 +1,17 @@
+.vscode/
+node_modules/
+.env
+.env.*
+*.csv
+*.json
+!tests/fixtures/valid-inventory.json
+!tests/fixtures/invalid-inventory.json
+*.log
+*.tmp
+*.pem
+*.key
+*.pfx
+*.p12
+data/
+exports/
+reports/

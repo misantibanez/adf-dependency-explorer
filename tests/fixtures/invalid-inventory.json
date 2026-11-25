@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "collections": {
+    "pipelines": [{ "name": "SinProperties" }]
+  }
+}

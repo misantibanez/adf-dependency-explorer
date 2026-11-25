@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file:; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>ADF | Explorador de dependencias</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="graph.js"></script>
+  <script defer src="demo.js"></script>
+  <script defer src="inventory-session.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="logo">ADF</span><div><h1>Explorador de dependencias</h1><p>Entiende las relaciones antes de cambiar tu factory</p></div></div>
+    <div class="actions"><a class="button" href="metrics.html">Metricas de objetos</a><button id="demo">Ver demo</button><label class="button primary" for="import">Importar inventario JSON</label><input id="import" type="file" accept=".json,application/json" hidden></div>
+  </header>
+  <div id="error" role="alert" hidden></div>
+  <section class="panel azure-panel">
+    <div class="panel-heading"><div><span class="eyebrow">DATOS REALES / AZURE CLI / SOLO LECTURA</span><h2>Seleccionar Azure Data Factory</h2></div><button id="azure-connect">Cargar suscripciones</button></div>
+    <p id="azure-status" role="status">Para conectar a Azure, inicia node server.js y abre http://127.0.0.1:8765. Ejecuta az login antes de conectar.</p>
+    <div class="azure-selectors"><div><label for="azure-subscription">Suscripcion</label><select id="azure-subscription" disabled><option value="">Selecciona una suscripcion</option></select></div><div><label for="azure-factory">Azure Data Factory / grupo de recursos</label><select id="azure-factory" disabled><option value="">Selecciona un ADF</option></select></div><button id="azure-analyze" class="primary" disabled>Analizar ADF</button></div>
+    <p class="hint">La seleccion no cambia el grafo hasta completar el analisis. Los permisos y el tenant corresponden a la sesion de az login en este equipo.</p>
+  </section>
+  <section class="summary"><div><span class="eyebrow">INVENTARIO LOCAL / SOLO LECTURA</span><h2 id="factory"></h2><p id="source"></p></div><div id="stats"></div></section>
+  <p class="notice">Las flechas indican <strong>usa / referencia a</strong>, no el orden de ejecucion. Este portal no elimina objetos. Un inventario sin referencias conocidas no garantiza un borrado seguro.</p>
+  <main>
+    <aside class="panel inventory">
+      <div class="panel-heading"><h2>Objetos</h2><span id="count"></span></div>
+      <label for="search">Buscar por nombre</label><input id="search" type="search" placeholder="Pipeline_B, dataset, servicio...">
+      <label for="type">Tipo de objeto</label><select id="type"><option value="">Todos los tipos</option value="pipeline">Pipelines</option><option value="activity">Actividades</option><option value="dataset">Datasets</option><option value="linkedService">Linked services</option><option value="integrationRuntime">Integration runtimes</option><option value="trigger">Triggers</option><option value="dataflow">Data flows</option></select>
+      <p class="hint">Marca pipelines para evaluar su borrado. Haz clic en un nombre para explorar sus relaciones.</p>
+      <div id="objects" class="object-list"></div>
+    </aside>
+    <section class="workspace">
+      <div class="panel">
+        <div class="panel-heading"><div><span class="eyebrow">MAPA DE RELACIONES</span><h2 id="focus-title">Selecciona un objeto</h2></div><div class="actions"><button id="zoom-out" aria-label="Alejar grafo">-</button><button id="zoom-in" aria-label="Acercar grafo">+</button><button id="reset-zoom">Ajustar</button></div></div>
+        <div class="graph-options"><label for="direction">Mostrar</label><select id="direction"><option value="both">Dependencias y consumidores</option><option value="outgoing">Objetos que usa</option><option value="incoming">Objetos que lo usan</option></select><label for="depth">Saltos</label><select id="depth"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="6" selected>6</option><option value="all">Todos</option></select></div>
+        <div id="legend"></div>
+        <div id="graph-info" class="hint"></div>
+        <div class="graph-scroll"><svg id="graph" role="img" aria-label="Grafo dirigido de dependencias"></svg></div>
+        <div id="relations" class="relations"></div>
+      </div>
+      <section class="panel deletion">
+        <div class="panel-heading"><div><span class="eyebrow">SIMULACION / SIN BORRADO</span><h2>Evaluar pipelines seleccionados</h2></div><div class="actions"><button id="clear">Limpiar seleccion</button><button id="export" disabled>Exportar reporte</button></div></div>
+        <div class="batch"><label for="batch">Pega nombres de pipelines (uno por linea)</label><textarea id="batch" rows="2" placeholder="Pipeline_A&#10;Pipeline_B"></textarea><button id="add-batch">Agregar a seleccion</button></div>
+        <div id="selection"></div><div id="report" aria-live="polite"></div>
+      </section>
+      <details class="panel warnings"><summary id="warnings-title">Advertencias del inventario</summary><div id="warnings"></div></details>
+    </section>
+  </main>
+  <footer>Analisis estatico de definiciones publicadas en ADF. Sin telemetria ni CDN. Las consultas a Azure se realizan desde el servidor local, no desde el navegador.</footer>
+</body>
+</html>

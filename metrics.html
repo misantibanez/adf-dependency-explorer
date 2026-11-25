@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>ADF | Metricas de objetos</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="graph.js"></script>
+  <script defer src="inventory-session.js"></script>
+  <script defer src="history.js"></script>
+  <script defer src="metrics.js"></script>
+</head>
+<body>
+  <header><div class="brand"><span class="logo">ADF</span><div><h1>Metricas de objetos</h1><p>Pipelines, datasets y data flows / candidatos a revision de limpieza</p></div></div><a class="button" href="index.html">Volver al explorador</a></header>
+  <div id="error" role="alert" hidden></div>
+  <section class="summary"><div><span class="eyebrow">MISMO INVENTARIO DEL EXPLORADOR</span><h2 id="factory">Sin inventario cargado</h2><p id="source">Carga un ADF o importa un JSON desde el explorador, en esta misma pestana.</p></div></section>
+  <p class="notice"><strong>Sin consumidores no significa sin uso.</strong> Las referencias conocidas y el historial ayudan a priorizar revisiones, pero no autorizan borrados. La ausencia de ejecuciones fuera de la cobertura disponible no demuestra inactividad.</p>
+  <main class="metrics-main">
+    <section class="panel"><div class="panel-heading"><h2>Resumen del inventario</h2><div><label for="metrics-type">Tipo de objeto</label><select id="metrics-type"><option value="pipeline">Pipelines</option><option value="dataset">Datasets</option><option value="dataflow">Data flows</option></select></div></div><div id="metrics-stats" class="metric-cards"></div><p id="metrics-quality" class="hint"></p><div id="distribution"></div></section>
+    <section class="panel" id="history-panel">
+      <h2>Ultima ejecucion e inactividad de pipelines</h2>
+      <div class="azure-selectors"><div><label for="history-source">Fuente del historial</label><select id="history-source"><option value="api">API de ADF (45 dias)</option><option value="csv">CSV de ejecuciones</option><option value="loganalytics">Log Analytics / Azure Monitor</option><option value="databricks" disabled>Tablas de Databricks (proximamente)</option></select></div><div><label for="history-months">Umbral de inactividad (meses calendario)</label><input id="history-months" type="number" min="1" max="120" step="1" value="1"></div><button id="history-load">Cargar historial</button></div>
+      <div id="history-csv" hidden><label for="history-file">CSV: pipelineName, runId, runStart, status; lastUpdated opcional</label><input id="history-file" type="file" accept=".csv,text/csv"><p class="hint">Un registro por ejecucion/evento. Fechas ISO 8601 con zona (ejemplo: 2026-10-01T12:00:00Z). No incluir parametros, secretos ni datos de negocio.</p></div>
+      <div id="history-la" hidden><label for="history-workspace">Log Analytics Workspace ID (GUID)</label><input id="history-workspace" placeholder="Workspace ID, no el resource ID"><label for="history-table">Tabla de diagnosticos</label><select id="history-table"><option value="ADFPipelineRun">ADFPipelineRun (Resource-specific)</option><option value="AzureDiagnostics">AzureDiagnostics</option></select></div>
+      <div id="history-coverage" hidden><div class="azure-selectors"><div><label for="history-from">Historial conservado desde (hora local)</label><input id="history-from" type="datetime-local"></div><div id="history-until"><label for="history-to">CSV completo hasta (hora local)</label><input id="history-to" type="datetime-local"></div></div><label class="check-label"><input id="history-complete" type="checkbox"> Confirmo que el historial incluye todas las ejecuciones de este ADF durante el intervalo, sin filtros ni huecos y con retencion suficiente.</label></div>
+      <p id="history-status" role="status">Historial no cargado. Selecciona una fuente y pulsa Cargar historial. API y Log Analytics requieren el servidor local.</p>
+      <p id="history-cutoff" class="hint"></p>
+      <p class="hint">La ultima fecha es el inicio mas reciente observado, de cualquier estado (incluye fallos). Sin registros se muestra fecha desconocida, nunca "no se ejecuto". Un historial de mas de 24 horas requiere actualizarse. Log Analytics requiere diagnosticos ya habilitados; no se configura nada en Azure.</p>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><h2 id="metrics-table-title">Pipelines y candidatos</h2><button id="copy-candidates" disabled>Copiar nombres sin consumidores</button></div>
+      <div class="graph-options"><label for="metrics-search">Buscar</label><input id="metrics-search" type="search" placeholder="Nombre de objeto"><label for="metrics-filter">Estado</label><select id="metrics-filter"><option value="unreferenced">Sin consumidores conocidos</option><option value="all">Todos</option><option value="referenced">Con consumidores</option><option value="candidate">Candidatos sin bloqueos estaticos</option><option value="review">Requieren revision por advertencias</option><option value="inactive">Candidatos por inactividad + sin consumidores</option></select></div>
+      <p id="metrics-count" class="hint"></p>
+      <div class="table-scroll"><table><thead><tr><th>Objeto</th><th>Consumidores directos</th><th>Referencias entrantes</th><th>Objetos que utiliza (transitivo)</th><th>Clasificacion estatica</th><th class="execution-column">Ultima ejecucion observada (UTC)</th><th class="execution-column">Estado de ultima ejecucion</th><th class="execution-column">Inactividad / candidato combinado</th><th>Accion</th></tr></thead><tbody id="metrics-rows"></tbody></table></div>
+      <button id="copy-inactive" hidden disabled>Copiar candidatos por inactividad</button>
+      <p id="copy-status" role="status"></p>
+      <p class="hint">La lista copiada incluye todos los objetos sin consumidores del tipo seleccionado, independientemente del filtro de estado o busqueda. Solo los pipelines admiten evaluacion de borrado por conjunto; para datasets y data flows, revisa sus relaciones en el grafo.</p>
+    </section>
+    <details class="panel warnings"><summary id="warnings-title">Advertencias del inventario</summary><ul id="warnings"></ul></details>
+  </main>
+  <footer>Solo lectura. Actualiza las definiciones en el explorador y el historial con Cargar historial. Databricks aun no esta implementado.</footer>
+</body>
+</html>

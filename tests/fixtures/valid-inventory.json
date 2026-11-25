@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "metadata": {
+    "factoryName": "ADF_Validacion_Local",
+    "source": "Fixture de pruebas - datos ficticios",
+    "completeness": {
+      "pipelines": true,
+      "datasets": true,
+      "linkedservices": true,
+      "integrationRuntimes": true,
+      "triggers": true,
+      "dataflows": true
+    }
+  },
+  "collections": {
+    "pipelines": [
+      {
+        "name": "A",
+        "properties": {
+          "activities": [
+            {
+              "name": "Ejecutar_B",
+              "type": "ExecutePipeline",
+              "typeProperties": {
+                "pipeline": { "type": "PipelineReference", "referenceName": "B" }
+              }
+            },
+            {
+              "name": "Transformar",
+              "type": "ExecuteDataFlow",
+              "typeProperties": {
+                "dataflow": { "type": "DataFlowReference", "referenceName": "Flow_Used" }
+              }
+            }
+          ]
+        }
+      },
+      { "name": "B", "properties": { "activities": [] } }
+    ],
+    "datasets": [
+      { "name": "Dataset_Used", "properties": {} },
+      { "name": "Dataset_Unused", "properties": {} }
+    ],
+    "linkedservices": [],
+    "integrationRuntimes": [],
+    "triggers": [],
+    "dataflows": [
+      { "name": "Flow_Used", "properties": {
+        "sources": [{ "dataset": { "type": "DatasetReference", "referenceName": "Dataset_Used" } }]
+      } },
+      { "name": "Flow_Unused", "properties": {} }
+    ]
+  }
+}
