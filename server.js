@@ -7,14 +7,27 @@ const { randomBytes, timingSafeEqual } = require("node:crypto");
 const { buildGraph } = require("./graph.js");
 const { fromRuns, validate: validateHistory } = require("./history.js");
 
+function queryCommand(operation, params = {}, backend = process.env.ADF_BACKEND || "powershell", python = process.env.PYTHON || "python") {
+  if (!["powershell", "python"].includes(backend)) throw new Error("ADF_BACKEND debe ser powershell o python.");
+  const isPython = backend === "python";
+  const args = isPython ? [path.join(__dirname, "azure_portal_query.py"), "--operation", operation] :
+    ["-NoProfile", "-NonInteractive", "-File", path.join(__dirname, "Azure-PortalQuery.ps1"), "-Operation", operation];
+  const pythonFlags = { SubscriptionId: "--subscription-id", ResourceGroupName: "--resource-group-name",
+    FactoryName: "--factory-name", Source: "--source", WorkspaceId: "--workspace-id",
+    CoverageFrom: "--coverage-from", LogTable: "--log-table" };
+  for (const [key, value] of Object.entries(params)) {
+    if (!Object.hasOwn(pythonFlags, key)) throw new Error("Parametro de consulta no permitido.");
+    args.push(isPython ? pythonFlags[key] : `-${key}`, value);
+  }
+  return { executable: isPython ? python : "pwsh", args, backend };
+}
 function queryAzure(operation, params = {}) {
-  const args = ["-NoProfile", "-NonInteractive", "-File", path.join(__dirname, "Azure-PortalQuery.ps1"), "-Operation", operation];
-  for (const [key, value] of Object.entries(params)) args.push(`-${key}`, value);
+  const { executable, args, backend } = queryCommand(operation, params);
   return new Promise((resolve, reject) => {
-    execFile("pwsh", args, { windowsHide: true, timeout: 300000, maxBuffer: 40 * 1024 * 1024 }, (failure, stdout) => {
+    execFile(executable, args, { windowsHide: true, timeout: 300000, maxBuffer: 40 * 1024 * 1024 }, (failure, stdout) => {
       let result;
       try { result = JSON.parse(stdout); }
-      catch { reject(new Error("No se pudo consultar Azure. Verifica PowerShell 7, Azure CLI y az login; la consulta puede haber excedido 5 minutos o 40 MB.")); return; }
+      catch { reject(new Error(`No se pudo consultar Azure. Verifica ${backend === "python" ? "Python 3.10+ y PYTHON" : "PowerShell 7"}, Azure CLI y az login; la consulta puede haber excedido 5 minutos o 40 MB.`)); return; }
       if (failure || result.error) reject(new Error(result.error || "Fallo la consulta a Azure; no se cargo un inventario parcial."));
       else resolve(result);
     });
@@ -109,10 +122,11 @@ function createServer(runQuery = queryAzure) {
   });
 }
 if (require.main === module) {
+  queryCommand("subscriptions");
   const port = Number(process.env.PORT || 8765);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("PORT debe ser un entero entre 1024 y 65535.");
   const server = createServer();
   server.on("error", error => { console.error(`No se pudo iniciar el servidor (${error.code}). Verifica si el puerto esta ocupado.`); process.exitCode = 1; });
   server.listen(port, "127.0.0.1", () => console.log(`Portal ADF: http://127.0.0.1:${port}\nUsa tu sesion de Azure CLI. Solo lectura. Ctrl+C para detener.`));
 }
-module.exports = { createServer, factoryParameters, queryAzure };
+module.exports = { createServer, factoryParameters, queryAzure, queryCommand };

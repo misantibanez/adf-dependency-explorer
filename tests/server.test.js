@@ -4,10 +4,27 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
-const { createServer, factoryParameters } = require("../server.js");
+const { createServer, factoryParameters, queryCommand } = require("../server.js");
 const subscriptionId = "11111111-1111-1111-1111-111111111111";
 const factoryId = `/subscriptions/${subscriptionId}/resourceGroups/rg-test/providers/Microsoft.DataFactory/factories/adf-test`;
 const snapshot = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "valid-inventory.json"), "utf8"));
+
+test("backend selector preserves PowerShell arguments and maps Python flags without a shell", () => {
+  const params = { SubscriptionId: subscriptionId, ResourceGroupName: "Grupo (PE)", FactoryName: "adf-test",
+    Source: "loganalytics", WorkspaceId: subscriptionId, CoverageFrom: "2024-01-01T00:00:00Z", LogTable: "AzureDiagnostics" };
+  const powershell = queryCommand("history", params, "powershell");
+  assert.equal(powershell.executable, "pwsh");
+  assert.deepEqual(powershell.args.slice(0, 6), ["-NoProfile", "-NonInteractive", "-File",
+    path.join(__dirname, "..", "Azure-PortalQuery.ps1"), "-Operation", "history"]);
+  const python = queryCommand("history", params, "python", "C:\\Python with spaces\\python.exe");
+  assert.equal(python.executable, "C:\\Python with spaces\\python.exe");
+  assert.deepEqual(python.args, [path.join(__dirname, "..", "azure_portal_query.py"), "--operation", "history",
+    "--subscription-id", subscriptionId, "--resource-group-name", "Grupo (PE)", "--factory-name", "adf-test",
+    "--source", "loganalytics", "--workspace-id", subscriptionId, "--coverage-from", "2024-01-01T00:00:00Z",
+    "--log-table", "AzureDiagnostics"]);
+  assert.throws(() => queryCommand("subscriptions", {}, "invalid"), /ADF_BACKEND/);
+  assert.throws(() => queryCommand("subscriptions", { Unexpected: "x" }, "python"), /no permitido/);
+});
 
 async function fixture(t, query) {
   const server = createServer(query);

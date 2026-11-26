@@ -15,3 +15,6 @@ node_modules/
 data/
 exports/
 reports/
+databricks/app/static/graph.js
+databricks/app/static/history.js
+__pycache__/

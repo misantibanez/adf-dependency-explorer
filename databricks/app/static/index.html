@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADF | Databricks</title>
+  <link rel="stylesheet" href="assets/portal.css">
+  <script defer src="assets/graph.js"></script>
+  <script defer src="assets/history.js"></script>
+  <script defer src="assets/portal.js"></script>
+</head>
+<body>
+  <header><h1>ADF Dependency Explorer / Databricks</h1><p>Tablas Delta · snapshots publicados · solo lectura</p></header>
+  <main>
+    <section>
+      <label for="snapshot">Factory / ultima extraccion</label>
+      <select id="snapshot" disabled><option value="">Cargando snapshots...</option></select>
+      <button id="refresh">Actualizar lista</button><button id="load" disabled>Cargar snapshot</button>
+      <p id="status" role="status">Conectando al SQL warehouse...</p>
+      <p id="error" role="alert" hidden></p>
+      <p>La App lee tablas; no consulta Azure ni elimina objetos. Para refrescar los datos, ejecutar el notebook o Job y actualizar esta lista.
+        Todos los usuarios autorizados de la App ven los datos permitidos a su service principal.</p>
+    </section>
+    <section>
+      <h2 id="factory">Sin inventario cargado</h2><p id="metadata"></p><div id="stats" class="stats"></div>
+      <p class="notice">Sin consumidores conocidos no significa borrado seguro. Las relaciones por Resource ID o hostname no acreditan el uso de una ruta privada.</p>
+      <details><summary id="warnings-title">Advertencias</summary><ul id="warnings"></ul></details>
+    </section>
+    <section>
+      <h2>Objetos y metricas</h2>
+      <label for="search">Buscar</label><input id="search" type="search" placeholder="Nombre del objeto">
+      <label for="type">Tipo</label>
+      <select id="type"><option value="">Todos</option><option value="pipeline">Pipeline</option><option value="dataset">Dataset</option>
+        <option value="dataflow">Data flow</option><option value="linkedService">Linked service</option><option value="activity">Actividad</option>
+        <option value="integrationRuntime">Integration runtime</option><option value="trigger">Trigger</option><option value="managedPrivateEndpoint">Managed private endpoint</option></select>
+      <label for="months">Inactividad: meses</label><input id="months" type="number" value="3" min="1" max="120">
+      <p id="history-status">Historial no cargado.</p>
+      <p>Las metricas se calculan con el mismo motor del portal original. La inactividad solo se evalua para pipelines con cobertura suficiente y reciente.</p>
+      <div class="scroll"><table><thead><tr><th>Seleccion</th><th>Objeto</th><th>Tipo</th><th>Consumidores</th><th>Referencias</th>
+        <th>Dependencias</th><th>Estado estatico</th><th>Ultima ejecucion</th><th>Estado de historial</th></tr></thead><tbody id="objects"></tbody></table></div>
+    </section>
+    <section>
+      <h2 id="focus">Relaciones</h2>
+      <label for="depth">Saltos</label><select id="depth"><option>1</option><option selected>2</option><option>3</option><option>6</option></select>
+      <p id="graph-status"></p><div class="scroll"><svg id="graph" role="img" aria-label="Grafo de relaciones"></svg></div>
+      <p>Flechas: usa/referencia, contiene, mismo recurso o posible relacion (linea discontinua). No representan orden de ejecucion.</p>
+      <ul id="relations"></ul>
+    </section>
+    <section>
+      <h2>Simular impacto de pipelines</h2>
+      <label for="batch">Nombres, uno por linea</label><textarea id="batch" rows="3"></textarea>
+      <button id="select">Seleccionar nombres</button><button id="clear">Limpiar seleccion</button><button id="export" disabled>Descargar reporte JSON</button>
+      <div id="report" aria-live="polite"></div>
+    </section>
+  </main>
+  <footer>Analisis estatico de definiciones publicadas. No autoriza ni ejecuta borrados. Sin CDN ni credenciales Azure en el navegador.</footer>
+</body>
+</html>

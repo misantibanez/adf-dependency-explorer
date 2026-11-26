@@ -5,13 +5,61 @@ no envia datos a terceros y no requiere Databricks para comenzar.
 
 ## Seleccionar un ADF real desde el portal
 
-Requisitos: **Node.js**, **PowerShell 7**, **Azure CLI** y permisos de lectura.
+Requisitos: **Node.js**, **Azure CLI**, permisos de lectura y uno de estos
+backends: **PowerShell 7** (predeterminado) o **Python 3.10+**.
 Desde la carpeta del proyecto:
 
 ```powershell
 az login --tenant "<tenant-id-donde-esta-el-ADF>"
 node .\server.js
 ```
+
+### Variante Databricks
+
+Para ejecutar la extraccion en un notebook, guardar inventario, relaciones,
+metricas e historial opcional en tablas Delta y publicar el portal HTML con
+Databricks Apps, ver [databricks/README.md](databricks/README.md).
+Esta variante usa Secrets y service principals; no requiere el servidor local.
+
+### Elegir PowerShell o Python
+
+La interfaz y el servidor Node.js son los mismos. El selector se configura al
+arrancar el servidor, no desde el navegador. Los scripts `.ps1` se conservan.
+
+Para usar Python, sin instalar paquetes con pip ni requerir PowerShell 7:
+
+```powershell
+az login --tenant "<tenant-id-donde-esta-el-ADF>"
+$env:ADF_BACKEND = "python"
+node .\server.js
+```
+
+En CMD, el equivalente es `set ADF_BACKEND=python` y luego `node server.js`.
+Si `python` no esta en PATH o se desea usar un entorno virtual:
+
+```powershell
+$env:PYTHON = "C:\ruta\a\.venv\Scripts\python.exe"
+$env:ADF_BACKEND = "python"
+node .\server.js
+```
+
+`PYTHON` debe contener solo el ejecutable, sin argumentos ni comillas internas
+(no `py -3`). Para volver al sabor original, detener con Ctrl+C y arrancar con
+`$env:ADF_BACKEND = "powershell"`. Si no se define ADF_BACKEND, se usa PowerShell.
+Un valor distinto de `powershell` o `python` impide iniciar el servidor.
+
+| PowerShell | Equivalente Python |
+| --- | --- |
+| [AdfApi.ps1](AdfApi.ps1) | [adf_api.py](adf_api.py), modulo compartido |
+| [Export-AdfInventory.ps1](Export-AdfInventory.ps1) | [export_adf_inventory.py](export_adf_inventory.py) |
+| [Pipeline-History.ps1](Pipeline-History.ps1) | [pipeline_history.py](pipeline_history.py) |
+| [Azure-PortalQuery.ps1](Azure-PortalQuery.ps1) | [azure_portal_query.py](azure_portal_query.py), worker JSON |
+
+Ambos sabores reutilizan `az login`, las mismas APIs, proyeccion de metadatos,
+paginacion y formatos JSON. Python tampoco exporta secretos, parametros de
+ejecucion ni codigo; conserva las marcas de referencias dinamicas y scripts
+no inspeccionados. Si falla una lectura no devuelve un inventario o historial
+parcial. Node.js sigue siendo necesario para consultar Azure desde el portal.
 
 Abrir **http://127.0.0.1:8765** (no el archivo HTML):
 
@@ -31,7 +79,7 @@ un ADF; seleccionar un nombre no significa que el grafo ya corresponda a el.
 Errores conservan el grafo anterior y muestran una advertencia explicita.
 
 El navegador llama solo al servidor local. El servidor consulta Azure via
-PowerShell/Azure CLI, reutiliza el mismo extractor y la misma proyeccion de
+PowerShell o Python/Azure CLI, reutiliza el extractor seleccionado y la misma proyeccion de
 metadatos. No devuelve tokens Azure ni guarda inventarios en el servidor.
 Se mantiene una sola consulta a la vez; limite de cinco minutos/40 MB por consulta.
 No se instala ninguna dependencia npm ni se despliega nada en Azure.
@@ -199,7 +247,7 @@ inventan fechas de ejecucion para ellos; este historial solo aplica a pipelines.
 
 ## Extraer de las APIs propias de ADF
 
-Requisitos: **PowerShell 7**, **Azure CLI**, sesion `az login` en el tenant
+Requisitos: **PowerShell 7 o Python 3.10+**, **Azure CLI**, sesion `az login` en el tenant
 correcto y permisos de lectura de la factory y sus recursos hijos.
 Reader en el ambito de la factory es una opcion; no se necesita Contributor.
 El extractor admite Azure publico (`management.azure.com`), no nubes soberanas.
@@ -214,6 +262,35 @@ az login
 ```
 
 Luego usar **Importar inventario JSON** en el portal.
+
+Equivalente Python (no requiere Node.js para exportar):
+
+```powershell
+python .\export_adf_inventory.py `
+  --subscription-id "<GUID-de-la-suscripcion>" `
+  --resource-group-name "<resource-group>" `
+  --factory-name "<nombre-adf>" `
+  --output-path ".\adf-inventory-python.json"
+```
+
+El archivo de destino no se sobrescribe. `--as-json` devuelve el inventario
+por stdout sin guardar archivos. `--help` muestra las opciones de cada script.
+Para obtener historial crudo proyectado (el portal lo resume con el mismo motor JS):
+
+```powershell
+python .\pipeline_history.py `
+  --source api `
+  --subscription-id "<GUID-de-la-suscripcion>" `
+  --resource-group-name "<resource-group>" `
+  --factory-name "<nombre-adf>"
+```
+
+Log Analytics usa `--source loganalytics --workspace-id "<GUID>"` junto con
+`--coverage-from "2024-01-01T00:00:00Z"` y opcionalmente
+`--log-table AzureDiagnostics` (por defecto `ADFPipelineRun`). Se mezcla la API
+nativa reciente, y la cobertura sigue requiriendo confirmacion en el portal.
+Las fechas requieren zona horaria. El limite por consulta sigue siendo 50000
+ejecuciones por fuente; excederlo genera un error, no truncamiento silencioso.
 
 El script hace exclusivamente `az rest --method get`, con API `2018-06-01`:
 
@@ -376,9 +453,12 @@ por coleccion para evitar la advertencia de completitud desconocida.
 node --test .\tests\graph.test.js .\tests\server.test.js .\tests\inventory-session.test.js .\tests\history.test.js
 pwsh -NoProfile -File .\tests\export.test.ps1
 pwsh -NoProfile -File .\tests\history.test.ps1
+python -m unittest discover -s tests -p "test_python.py" -v
 ```
 
 Las pruebas del extractor, historial y servidor simulan Azure CLI/las consultas: no acceden a Azure.
+Las pruebas Python usan unittest de la biblioteca estandar y verifican tambien
+que el inventario generado funciona con el motor de grafos JavaScript.
 No se ha verificado conectividad ni permisos con una factory real.
 La interfaz se valido con importacion valida/invalida, busqueda, seleccion por
 lote, selector suscripcion/ADF, carga desde un backend simulado, conservacion
