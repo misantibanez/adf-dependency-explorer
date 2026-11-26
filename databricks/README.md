@@ -81,12 +81,18 @@ Completar los widgets antes de continuar despues de la celda que los crea.
    acceso. Requiere `USE CATALOG` y `CREATE SCHEMA` si falta, ademas de los
    permisos de escritura/lectura indicados antes. Los errores se propagan:
    no se sustituyen catalogos ni ubicaciones de almacenamiento.
-5. Ejecutar la extraccion y preparar el portal. Despues de crear la App desde
-   la interfaz, completar `app_name` y ejecutar la ultima celda. Resuelve
+5. Ejecutar la extraccion. Antes de la celda `app_source = prepare()`, completar
+   `app_name` y crear manualmente la App desde **Compute > Apps** con exactamente
+   ese nombre (si ya existe, reutilizarla). Luego ejecutar las celdas siguientes
+   para preparar el portal y conceder permisos. La celda de permisos resuelve
    `service_principal_client_id` desde la App y concede solo `USE CATALOG`,
    `USE SCHEMA` y `SELECT` sobre `adf_snapshots`. No copiar el OAuth App ID ni
    el App ID de Overview. Requiere consultar esa App y poder conceder esos
    permisos. Si la identidad aun no esta lista, esperar y reintentar la celda.
+   Al finalizar, seguir la ultima celda Markdown: agregar el SQL warehouse en
+   **Resources** con permiso **Can use** y clave `sql-warehouse`, actualizar
+   `ADF_CATALOG` y `ADF_SCHEMA` en [app/app.yaml](app/app.yaml) y hacer **Deploy**
+   de la carpeta indicada por `app_source`.
 6. Para ejecuciones normales o Jobs, dejar **`setup_mode=false`**: no se crean
    scopes/esquemas, no hay prompts, listados ni cambios de permisos. La
    extraccion sigue requiriendo el esquema y los secretos ya preparados.

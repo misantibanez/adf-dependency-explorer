@@ -162,6 +162,17 @@ for suffix in ("metrics", "issues"):
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Crear la App manualmente antes de continuar
+# MAGIC En el primer despliegue, completar el parametro `app_name` con el nombre
+# MAGIC deseado y crear la App desde **Compute > Apps** usando exactamente ese nombre.
+# MAGIC Si la App ya existe, usar su nombre en `app_name`; no crear otra.
+# MAGIC Una vez creada, regresar a este notebook y ejecutar las celdas que siguen
+# MAGIC para preparar el codigo y, con `setup_mode=true`, conceder permisos
+# MAGIC al service principal de la App. El despliegue del codigo se realiza al final.
+
+# COMMAND ----------
+
 app_source = prepare()
 print(f"Codigo de Databricks Apps preparado en: {app_source}")
 print("Configurar catalogo/esquema en app.yaml y desplegar esta carpeta desde Compute > Apps.")
@@ -196,3 +207,20 @@ if setup_mode and app_name:
     print("Permisos de lectura concedidos al service principal de la App.")
 else:
     print("Permisos App no ejecutados: requieren setup_mode=true y app_name de una App existente.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Configurar recursos y desplegar el portal
+# MAGIC Una vez terminadas las celdas anteriores:
+# MAGIC 1. Abrir la App creada y, en **Resources**, agregar el **SQL warehouse**
+# MAGIC    que consultara las tablas, con permiso **Can use** y clave `sql-warehouse`.
+# MAGIC 2. Editar `databricks/app/app.yaml`: reemplazar `CHANGE_ME` en `ADF_CATALOG`
+# MAGIC    y `ADF_SCHEMA` por los mismos valores de los parametros `catalog` y `schema`.
+# MAGIC    Mantener `DATABRICKS_WAREHOUSE_ID` con `valueFrom: sql-warehouse`,
+# MAGIC    coincidiendo con la clave del recurso agregado.
+# MAGIC 3. Hacer **Deploy** del codigo seleccionando como origen la carpeta indicada
+# MAGIC    por `app_source` en la celda de preparacion.
+# MAGIC 4. Esperar que el despliegue termine correctamente y abrir la URL de la App.
+# MAGIC La App lee los snapshots publicados. Para refrescar los datos, volver a
+# MAGIC ejecutar la recoleccion con `setup_mode=false`; no hace falta crear otra App.
