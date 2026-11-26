@@ -18,7 +18,8 @@ necesario para obtener una URL independiente y autenticada.
   dependencias de [requirements-notebook.txt](requirements-notebook.txt).
   Se recomienda un Databricks Runtime LTS compatible con las politicas del workspace.
   QuickJS-NG ejecuta el motor JavaScript en Python; no se reimplementa el grafo.
-- Preparar un catalogo y un esquema **existentes**; el notebook no los crea.
+- Preparar un catalogo **existente** y un esquema. El notebook puede crear el
+  esquema con `setup_mode=true`; nunca crea el catalogo.
   Sus nombres deben usar letras ASCII, numeros y guion bajo, sin empezar por numero.
 - Crear un service principal de Entra para extraer ADF. Darle acceso de lectura
   al ADF y permiso para consultar ejecuciones si se usa historial.
@@ -45,12 +46,55 @@ Python y crear los widgets; completar sus valores antes de continuar.
 | `catalog`, `schema` | Destino de tablas Delta, por ejemplo `main` / `adf_analysis` |
 | `subscription_id` | GUID de la suscripcion de ADF |
 | `resource_group`, `factory_name` | Un ADF por ejecucion; no se cambia ninguna suscripcion global |
-| `secret_scope` | Scope existente con las credenciales de Entra |
+| `secret_scope` | Scope con las credenciales de Entra; se puede preparar con `setup_mode=true` |
 | `tenant_key`, `client_key`, `secret_key` | Nombres de claves; nunca sus valores |
 | `history_source` | `none` (predeterminado), `api` o `loganalytics` |
 | `workspace_id` | GUID del workspace Log Analytics, no ID del workspace Databricks |
 | `coverage_from` | Solo logs: fecha ISO con zona horaria, por ejemplo `2026-01-01T00:00:00Z` |
 | `log_table` | `ADFPipelineRun` o `AzureDiagnostics` |
+| `setup_mode` | `false` por defecto. `true` habilita las celdas interactivas de preparacion |
+| `app_name` | Nombre de una App existente; opcional, solo para concederle permisos con `setup_mode=true` |
+
+### Preparacion interactiva sin CLI
+
+El notebook incluye las celdas de preparacion de Secrets, listado de sus
+metadatos, creacion/verificacion del esquema y permisos del portal.
+No contiene salidas de ejecucion, credenciales ni IDs de un entorno particular.
+Completar los widgets antes de continuar despues de la celda que los crea.
+
+1. Elegir un catalogo accesible desde **este workspace**, no necesariamente el
+   de otro despliegue. Por ejemplo, si existe `adb_cc_premium`, usarlo con el
+   esquema `adf_dependency_explorer`. Un catalogo puede estar restringido a
+   otros workspaces aunque el usuario tenga permisos.
+2. Establecer `setup_mode=true`, completar `secret_scope` y ejecutar las
+   celdas de preparacion en orden. Usan `WorkspaceClient()` con la identidad
+   del usuario del notebook; requieren un compute compatible con autenticacion
+   nativa del SDK y permisos para las operaciones seleccionadas.
+3. El scope se crea solo si falta. Se conservan las claves existentes, y solo
+   las ausentes se solicitan mediante `getpass`. Los nombres se toman de
+   `tenant_key`, `client_key` y `secret_key`. Para `client-secret`, introducir
+   el **Value** del secreto de Entra, no su Secret ID.
+   Si el runtime no admite entrada oculta, detenerse: no sustituirla por texto
+   en celdas/widgets. Un scope respaldado por Key Vault se completa en Key Vault.
+   Estas celdas no rotan secretos existentes ni conceden ACL sobre el scope.
+4. Se crea el esquema con `CREATE SCHEMA IF NOT EXISTS` y se verifica su
+   acceso. Requiere `USE CATALOG` y `CREATE SCHEMA` si falta, ademas de los
+   permisos de escritura/lectura indicados antes. Los errores se propagan:
+   no se sustituyen catalogos ni ubicaciones de almacenamiento.
+5. Ejecutar la extraccion y preparar el portal. Despues de crear la App desde
+   la interfaz, completar `app_name` y ejecutar la ultima celda. Resuelve
+   `service_principal_client_id` desde la App y concede solo `USE CATALOG`,
+   `USE SCHEMA` y `SELECT` sobre `adf_snapshots`. No copiar el OAuth App ID ni
+   el App ID de Overview. Requiere consultar esa App y poder conceder esos
+   permisos. Si la identidad aun no esta lista, esperar y reintentar la celda.
+6. Para ejecuciones normales o Jobs, dejar **`setup_mode=false`**: no se crean
+   scopes/esquemas, no hay prompts, listados ni cambios de permisos. La
+   extraccion sigue requiriendo el esquema y los secretos ya preparados.
+
+La preparacion no crea ni despliega la App, no agrega el warehouse y no edita
+su configuracion. Configurar el mismo catalogo/esquema en el portal y seguir
+la seccion de despliegue. Si se cambia `setup_mode` sin reiniciar Python,
+volver a ejecutar la celda que inicializa `WorkspaceClient` antes de continuar.
 
 El inventario incluye pipelines, datasets, linked services, IR, triggers,
 data flows y managed private endpoints de todas las redes administradas.
