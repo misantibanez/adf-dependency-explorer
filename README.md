@@ -20,6 +20,8 @@ Para ejecutar la extraccion en un notebook, guardar inventario, relaciones,
 metricas e historial opcional en tablas Delta y publicar el portal HTML con
 Databricks Apps, ver [databricks/README.md](databricks/README.md).
 Esta variante usa Secrets y service principals; no requiere el servidor local.
+Incluye [un comando Python de despliegue](databricks/README.md#despliegue-automatizado-desde-python)
+con vista previa local y actualizacion explicita del notebook, tablas y App.
 
 ### Elegir PowerShell o Python
 

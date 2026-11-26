@@ -114,6 +114,88 @@ mantener una calificacion de inactividad obsoleta en tablas.
 
 ## 3. Desplegar el portal HTML como Databricks App
 
+### Despliegue automatizado desde Python
+
+[deploy.py](deploy.py) prepara las fuentes, crea el esquema y las siete tablas
+si faltan, importa el notebook y sus modulos, crea o reutiliza la App, concede
+los tres permisos minimos de Unity Catalog y despliega el portal.
+Requiere un **catalogo y SQL warehouse existentes**; no crea clusters, Jobs,
+catalogos, scopes ni secretos, ni ejecuta la extraccion de ADF.
+
+Desde la raiz local del repositorio, con Python 3.10+ y la CLI moderna de
+Databricks instalada, autenticar al usuario que realizara el despliegue:
+
+```powershell
+python -m pip install -r .\databricks\requirements-deploy.txt
+databricks auth login --host "https://adb-<workspace-id>.<region>.azuredatabricks.net" --profile adf-explorer
+```
+
+El SDK reutiliza ese perfil; no pasar PAT, tokens ni secretos como argumentos.
+La identidad de despliegue es distinta de las credenciales de Entra para ADF.
+Necesita crear archivos y Apps, usar el warehouse, crear el esquema/tablas en
+el catalogo y conceder los permisos descritos abajo. En destinos existentes,
+requiere los privilegios de propietario/MANAGE correspondientes. Compartir la
+App y conceder permisos al usuario/Run as del notebook sigue siendo una tarea
+del administrador.
+
+Preparar argumentos para el destino elegido; estos valores no son secretos:
+
+```powershell
+$deployArgs = @(
+    "--host", "https://adb-<workspace-id>.<region>.azuredatabricks.net",
+    "--profile", "adf-explorer",
+    "--warehouse-id", "<warehouse-id-hexadecimal-de-16-caracteres>",
+    "--catalog", "<catalogo>",
+    "--schema", "adf_dependency_explorer",
+    "--app-name", "adf-dependency-explorer",
+    "--workspace-path", "/Shared/adf-dependency-explorer"
+)
+
+# Vista previa local: no autentica, consulta ni modifica recursos.
+python .\databricks\deploy.py @deployArgs
+
+# Aplicar: puede iniciar el warehouse y la App y generar costos.
+python .\databricks\deploy.py @deployArgs --apply
+if ($LASTEXITCODE -ne 0) { throw "Fallo el despliegue; revisar el error anterior." }
+```
+
+El comando usa una lista explicita de 21 archivos. No sube el resto del
+repositorio, inventarios, configuracion local, credenciales ni entornos
+virtuales. Inyecta catalogo/esquema en las fuentes enviadas sin modificar los
+archivos locales; copia los motores canonicos directamente en el payload.
+La vista previa solo valida entradas y fuentes locales: **no acredita
+permisos, disponibilidad ni ausencia de conflictos remotos**.
+
+Al aplicar, revisa los tipos/esquemas de tablas existentes y compara todas las
+fuentes remotas antes de escribir. Omite archivos identicos. Si encuentra
+codigo distinto, aborta sin modificar recursos; revisar las diferencias y,
+solo si se acepta reemplazarlo, ejecutar:
+
+```powershell
+python .\databricks\deploy.py @deployArgs --apply --overwrite
+```
+
+**`--overwrite` reemplaza tambien las celdas que se hayan agregado al notebook
+remoto**, incluidas celdas de diagnostico. Guardar esos cambios primero o usar
+otra carpeta dedicada. No cambia un recurso `sql-warehouse` incompatible en
+una App existente: corregirlo manualmente o elegir otra App.
+No elimina ni reemplaza tablas o snapshots. Las operaciones no son una
+transaccion: un fallo puede dejar recursos creados o archivos actualizados.
+Corregir la causa y reintentar con los mismos parametros; no ejecutar dos
+despliegues simultaneos sobre el mismo destino. Si una consulta supera el
+timeout, puede continuar en el warehouse; revisar Query History antes de
+reintentar. `--timeout-seconds` controla la espera por operacion (1200 por
+defecto), no la duracion total del comando.
+
+Solo termina con exito despues de observar deployment `SUCCEEDED`, compute
+`ACTIVE`, App `RUNNING` y el notebook reconocido como tal. Imprime las URL de
+App y notebook. Abrir la App con una sesion autorizada y cargar un snapshot
+para verificar la consulta SQL **con la identidad de la App**: los estados de
+la plataforma no sustituyen esa prueba. Completar los widgets de ADF/Secrets
+y ejecutar el notebook para crear el primer snapshot.
+
+### Alternativa manual
+
 1. La ultima celda del notebook ejecuta [prepare_app.py](prepare_app.py), que
    copia los motores canonicos `graph.js` e `history.js` dentro de
    [app/static/](app/static/). Ejecutarla tambien despues de actualizar esos motores.
@@ -174,7 +256,14 @@ python -B -m unittest discover -s .\tests -p "test_python.py" -v
 
 Las pruebas usan HTTP, Spark y SQL simulados; comparan el motor embebido con
 Node.js (solo requerido para esa prueba de paridad). No crean recursos ni
-requieren secretos. Antes de produccion, verificar en el workspace real:
+requieren secretos. Para probar solo la automatizacion, sin instalar las
+dependencias del notebook ni de la App:
+
+```powershell
+python -B -m unittest discover -s .\databricks\tests -p "test_deploy.py" -v
+```
+
+Antes de produccion, verificar en el workspace real:
 instalacion de dependencias en el Runtime elegido, permisos de ADF/Secrets/UC,
 escritura Delta, conexion OAuth al warehouse y acceso al portal por usuarios
 autorizados. Una validacion local no acredita esos permisos ni un despliegue.
